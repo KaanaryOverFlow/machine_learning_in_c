@@ -106,151 +106,148 @@ void mat_fill(Mat m, double x) {
 
 }
 
+Mat mat_row(Mat m, size_t row) {
+	return (Mat) {
+		.rows = 1,
+		.cols = m.cols,
+		.data = &MAT_AT(m, row, 0)
+	};
+}
+
+void mat_copy(Mat a, Mat b) {
+	if (a.cols != b.cols || a.rows != b.rows) die("invalid mat to copy");
+
+	FOR(a.rows) {
+		FORR(a.cols) {
+			MAT_AT(a, i, ii) = MAT_AT(b, i, ii);
+		}
+
+	}
+}
+
 
 
 typedef struct {
-	Mat a0;
-	Mat w1, b1, a1;
-	Mat w2, b2, a2;
-} Xor;
+	size_t count;
+	Mat *ws;
+	Mat *bs;
+	Mat *as;
 
-double ileri(Xor xor) {
+	Mat *dw;
+	Mat *db;
+} NN;
 
-	/*
-	Mat bir = mat_alloc(3,5);
-	Mat iki = mat_alloc(5,7);
-	Mat r = mat_alloc(3,7);
+#define ARRAY_LEN(x) sizeof(x)/sizeof(x[0])
 
-	mat_fill(bir, 3);
-	mat_fill(iki, 5);
-	mat_dot(r, bir, iki);
-
-	mat_p(bir);
-	mat_p(iki);
-	mat_p(r);
-
-	die("X");
-
-	*/
+NN nn_alloc(size_t *arch, size_t count) {
+	NN nn;
+	nn.count = count - 1;
+	nn.ws = malloc(sizeof(Mat) * nn.count);
+	nn.bs = malloc(sizeof(Mat) * nn.count);
+	nn.as = malloc(sizeof(Mat) * count);
 	
-	mat_dot(xor.a1, xor.a0, xor.w1);
-	mat_sum(xor.a1, xor.b1);
-	mat_sig(xor.a1);
-	
-	mat_dot(xor.a2, xor.a1, xor.w2);
-	mat_sum(xor.a2, xor.b2);
-	mat_sig(xor.a2);
-	return MAT_AT(xor.a2, 0, 0);
+	nn.dw = malloc(sizeof(Mat) * nn.count);
+	nn.db = malloc(sizeof(Mat) * nn.count);
 
-}
+	nn.as[0] = mat_alloc(1, arch[0]);
 
-double cost(Xor xor, Mat ti, Mat to) {
-	size_t tc = ti.rows;
-
-	double cost = 0;
-	FOR(tc) {
-		MAT_AT(xor.a0, 0, 0) = MAT_AT(ti, i, 0);
-		MAT_AT(xor.a0, 0, 1) = MAT_AT(ti, i, 1);
+	FOR(nn.count) {
+		nn.ws[i] = mat_alloc(nn.as[i].cols, arch[i+1]);
+		nn.bs[i] = mat_alloc(1 , arch[i+1]);
+		nn.as[i+1] = mat_alloc(1 , arch[i+1]);
 		
-		ileri(xor);
-		double d = MAT_AT(to, i, 0) - MAT_AT(xor.a2, 0, 0);
-		cost += d*d;
+		nn.dw[i] = mat_alloc(nn.as[i].cols, arch[i+1]);
+		nn.db[i] = mat_alloc(1 , arch[i+1]);
+		
 	}
-	return cost/tc;
+
+	return nn;
 }
 
-
-Xor xor_alloc() {
-	
-	Xor xor;
-	xor.a0 = mat_alloc(1,2);
-	
-	xor.w1 = mat_alloc(2,2);
-	xor.b1 = mat_alloc(1,2);
-	xor.a1 = mat_alloc(1,2);
-	
-	xor.w2 = mat_alloc(2,1);
-	xor.b2 = mat_alloc(1,1);
-	xor.a2 = mat_alloc(1,1);
-	return xor;
-
+void nn_print(NN nn, char *name) {
+	note("dumping %s NN", name);
+	FOR(nn.count) {
+		mat_p(nn.ws[i]);
+		mat_p(nn.bs[i]);
+	}
 }
 
-void learn(Xor g, Xor m, Mat ti, Mat to) {
+#define nn_p(a) nn_print(a, #a);
+#define nn_in(nn) nn.as[0]
+#define nn_out(nn) nn.as[nn.count]
 
-	double eps = 1e-1;
-	double rate = 1e-1;
+void nn_ileri(NN nn) {
+	FOR(nn.count) {
+		mat_dot(nn.as[i + 1], nn.as[i], nn.ws[i]);
+		mat_sum(nn.as[i + 1], nn.bs[i]);
+		mat_sig(nn.as[i + 1]);
+	}
+}
+
+double nn_cost(NN nn, Mat ti, Mat to) {
+	double cost = 0;
+	if (ti.rows != to.rows || to.cols != nn_out(nn).cols) die("invalied ti and to to cost");
+	
+	FOR(ti.rows) {
+		Mat in = mat_row(ti, i);
+		Mat out = mat_row(to, i);
+		mat_copy(nn_in(nn), in);
+		nn_ileri(nn);
+		FORR(nn_out(nn).cols) {
+			double d = MAT_AT(nn_out(nn), 0, ii) - MAT_AT(out, 0, ii);
+			cost += d * d;
+		}
+
+	}
+	
+	return cost/ti.rows;
+}
+
+void nn_learn(NN nn, double eps, double rate, Mat ti, Mat to) {
 	double saved = 0;
-	double c = cost(m, ti, to);
+	double cost = nn_cost(nn, ti, to);
 
-	FOR(m.w1.rows) {
-		FORR(m.w1.cols) {
-			saved = MAT_AT(m.w1, i, ii);
-			MAT_AT(m.w1, i, ii) += eps;
-			MAT_AT(g.w1, i, ii) = (cost(m, ti, to) - c)/eps;
-			// phex(MAT_AT(g.w1, i, ii));
-			MAT_AT(m.w1, i, ii) = saved;
+	FOR(nn.count) {
+		FORR(nn.ws[i].rows) {
+			for (unsigned long iii = 0; iii < nn.ws[i].cols; iii++) {
+				saved = MAT_AT(nn.ws[i], ii, iii);
+				MAT_AT(nn.ws[i], ii, iii) += eps;
+				MAT_AT(nn.dw[i], ii, iii) = (nn_cost(nn, ti, to) - cost)/eps;
+				MAT_AT(nn.ws[i], ii, iii) = saved;
+			}
+		}
+		
+		FORR(nn.bs[i].rows) {
+			for (unsigned long iii = 0; iii < nn.bs[i].cols; iii++) {
+				saved = MAT_AT(nn.bs[i], ii, iii);
+				MAT_AT(nn.bs[i], ii, iii) += eps;
+				MAT_AT(nn.db[i], ii, iii) = (nn_cost(nn, ti, to) - cost)/eps;
+				MAT_AT(nn.bs[i], ii, iii) = saved;
+			}
 		}
 	}
 	
-	FOR(m.w2.rows) {
-		FORR(m.w2.cols) {
-			saved = MAT_AT(m.w2, i, ii);
-			MAT_AT(m.w2, i, ii) += eps;
-			MAT_AT(g.w2, i, ii) = (cost(m, ti, to) - c)/eps;
-			MAT_AT(m.w2, i, ii) = saved;
+	FOR(nn.count) {
+		FORR(nn.ws[i].rows) {
+			for (unsigned long iii = 0; iii < nn.ws[i].cols; iii++) {
+				MAT_AT(nn.ws[i], ii, iii) -= rate * MAT_AT(nn.dw[i], ii, iii);
+			}
+		}
+		
+		FORR(nn.bs[i].rows) {
+			for (unsigned long iii = 0; iii < nn.bs[i].cols; iii++) {
+				MAT_AT(nn.bs[i], ii, iii) -= rate * MAT_AT(nn.db[i], ii, iii);
+			}
 		}
 	}
-	
-	FOR(m.b1.rows) {
-		FORR(m.b1.cols) {
-			saved = MAT_AT(m.b1, i, ii);
-			MAT_AT(m.b1, i, ii) += eps;
-			MAT_AT(g.b1, i, ii) = (cost(m, ti, to) - c)/eps;
-			MAT_AT(m.b1, i, ii) = saved;
-		}
-	}
-	
-	FOR(m.b2.rows) {
-		FORR(m.b2.cols) {
-			saved = MAT_AT(m.b2, i, ii);
-			MAT_AT(m.b2, i, ii) += eps;
-			MAT_AT(g.b2, i, ii) = (cost(m, ti, to) - c)/eps;
-			MAT_AT(m.b2, i, ii) = saved;
-		}
-	}
-	
-	FOR(m.w1.rows) {
-		FORR(m.w1.cols) {
-			MAT_AT(m.w1, i, ii) -= rate*MAT_AT(g.w1, i, ii);
-		}
-	}
-	
-	FOR(m.w2.rows) {
-		FORR(m.w2.cols) {
-			MAT_AT(m.w2, i, ii) -= rate*MAT_AT(g.w2, i, ii);
-		}
-	}
-	
-	FOR(m.b1.rows) {
-		FORR(m.b1.cols) {
-			MAT_AT(m.b1, i, ii) -= rate*MAT_AT(g.b1, i, ii);
-		}
-	}
-	
-	FOR(m.b2.rows) {
-		FORR(m.b2.cols) {
-			MAT_AT(m.b2, i, ii) -= rate*MAT_AT(g.b2, i, ii);
-		}
-	}
-
 }
-
 
 void sec_main(char *param) {
 	
-	Xor xor = xor_alloc();
-	Xor xor_d = xor_alloc();
+	size_t arch[] = {2, 5, 4, 1};
+	NN nn = nn_alloc(arch, ARRAY_LEN(arch));
+
+
 
 	double data_in[] = {
 		0,0,
@@ -265,30 +262,22 @@ void sec_main(char *param) {
 	Mat to = {.rows = 4, .cols = 1, .data = data_out};
 
 	
+	double eps = 1e-1;
+	double rate = 1e-1;
 
-	// the problem is in the ileri. resut is chancing with same shits
-	note("before");
-	FOR(2) {
-		FORR(2) {
-			MAT_AT(xor.a0, 0, 0) = i;
-			MAT_AT(xor.a0, 0, 1) = ii;
-			note("%zu ^ %zu = %lf",i, ii, ileri(xor));
-		}
-	}
-
-	note("cost : %lf", cost(xor, ti, to));
+	note("cost : %lf", nn_cost(nn, ti, to));
 	FOR(100 * 1000)
-		learn(xor_d, xor, ti, to);
-	note("cost : %lf", cost(xor, ti, to));
-	note("after");
+		nn_learn(nn, eps, rate, ti, to);
+	note("cost : %lf", nn_cost(nn, ti, to));
+	
 	FOR(2) {
 		FORR(2) {
-			MAT_AT(xor.a0, 0, 0) = i;
-			MAT_AT(xor.a0, 0, 1) = ii;
-			note("%zu ^ %zu = %lf",i, ii, ileri(xor));
+			MAT_AT(nn_in(nn), 0, 0) = i;
+			MAT_AT(nn_in(nn), 0, 1) = ii;
+			nn_ileri(nn);
+			note("%zu ^ %zu = %lf",i, ii, MAT_AT(nn_out(nn), 0, 0));
 		}
 	}
-
 }
 
 
