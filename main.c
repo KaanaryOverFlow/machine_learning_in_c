@@ -16,24 +16,53 @@ struct {
 void default_app() {
 	in();
 
-	Mat in = mat_alloc(1, 2);
-	MAT_AT(in, 0, 0) = 1;
-	MAT_AT(in, 0, 1) = 1;
+	double input[] = {
+		0,0,
+		0,1,
+		1,0,
+		1,1,
+	};
+
+	double output[] = {
+		0,
+		1,
+		1,
+		0,
+	};
+
+
+	Mat in = {.rows = 4, .cols = 2, .data = input};
+	Mat out = {.rows = 4, .cols = 1, .data = output};
+
+	mat_p(in);
+	mat_p(out);
 	
-	Mat out = mat_alloc(1, 1);
-	MAT_AT(out, 0, 0) = 0;
 
-
-	
-
-	size_t arch[] =  {3, 5, 9, 1};
+	size_t arch[] =  {2, 1};
 	NN nn = nn_alloc(2, arch, ARRAY_LEN(arch));
-	mat_p(nn.layer[nn.layer_count].output);
-	mat_copy(nn.input, in);
-	nn_forward(nn);
-	mat_p(nn.layer[nn.layer_count].output);
+	
+	
+	plf(nn_cost(nn, in, out));
 
-	nn_cost(nn, in, out);
+
+	for_print_percent(i, 1000 * 600)
+		nn_delta(nn, mat_row(in, 0), mat_row(out, 0));
+		nn_learn(nn, 1e-1);
+	}
+	plf(nn_cost(nn, in, out));
+
+/*
+	for_print_percent(i, 1000 * 1000)
+#if 1
+		nn_delta(nn, in, out);
+		nn_learn(nn, 1e-1);
+#else
+		Fnn_delta(nn, in, out);
+#endif
+	}
+
+	plf(nn_cost(nn, in, out));
+*/
 
 
 	out();

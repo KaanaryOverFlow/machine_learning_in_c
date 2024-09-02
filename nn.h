@@ -19,6 +19,12 @@ typedef struct {
 	Mat bias;
 	Mat input;
 	Mat output;
+
+	Mat delta_weight;
+	Mat Particular_delta_weight;
+	Mat delta_bias;
+	Mat Particular_delta_bias;
+	Mat error;
 } Layer;
 
 typedef struct {
@@ -46,8 +52,8 @@ Mat mat_alloc(size_t rows, size_t cols) {
 	m.data = malloc(sizeof(*m.data)*rows*cols);
 	if (m.data == NULL) die("out of memory");
 	srand(time(NULL));
-	FOR(i, m.rows)
-		FOR(ii, m.cols)
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
 			MAT_AT(m, i, ii) = rand_double() * (h - l) + l + 1e-1;
 		}
 	}
@@ -58,8 +64,8 @@ Mat mat_alloc(size_t rows, size_t cols) {
 
 void mat_print(Mat m, char *name) {
 	printf("%s = [\n", name);
-	For(i, m.rows) {
-		For(ii, m.cols) {
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
 			printf("\t%lf", MAT_AT(m, i, ii));
 		}
 		printf("\n");
@@ -71,8 +77,8 @@ void mat_print(Mat m, char *name) {
 
 void mat_sum(Mat a, Mat b) {
 	if (a.cols != b.cols || a.rows != b.rows) die("invalid matrix to sum");
-	FOR(i, a.rows)
-		FOR(ii, a.cols)
+	FOR(i, a.rows) {
+		FOR(ii, a.cols) {
 			MAT_AT(a, i, ii) += MAT_AT(b, i, ii);
 		}
 	}
@@ -87,8 +93,8 @@ void mat_dot(Mat dest, Mat a, Mat b) {
 	
 	mat_fill(dest, 0);
 
-	FOR(i, dest.rows)
-		FOR(ii, dest.cols)
+	FOR(i, dest.rows) {
+		FOR(ii, dest.cols) {
 			MAT_AT(dest, i, ii) = 0;
 			for (unsigned int iii = 0; iii < inner; iii++) {
 				
@@ -104,16 +110,25 @@ double sigmoidf(double x) {
 }
 
 void mat_sig(Mat m) {
-	FOR(i, m.rows)
-		FOR(ii, m.cols)
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
 			MAT_AT(m, i, ii) = sigmoidf(MAT_AT(m, i, ii));
 		}
 	}
 }
 
+void mat_derivative_sig(Mat m) {
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
+			MAT_AT(m, i, ii) = MAT_AT(m, i, ii) * (1 - MAT_AT(m, i, ii));
+		}
+	}
+}
+
+
 void mat_fill(Mat m, double x) {
-	FOR(i, m.rows)
-		FOR(ii, m.cols)
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
 			MAT_AT(m, i, ii) = x;
 		}
 	}
@@ -131,14 +146,19 @@ Mat mat_row(Mat m, size_t row) {
 void mat_copy(Mat a, Mat b) {
 	if (a.cols != b.cols || a.rows != b.rows) die("invalid mat to copy");
 
-	FOR(i, a.rows)
-		FOR(ii, a.cols)
+	FOR(i, a.rows) {
+		FOR(ii, a.cols) {
 			MAT_AT(a, i, ii) = MAT_AT(b, i, ii);
 		}
 
 	}
 }
 
+void mat_T(Mat *m) {
+	size_t rows_backup = m->rows;
+	m->rows = m->cols;
+	m->cols = rows_backup;
+}
 
 
 Layer layer_alloc(size_t a, size_t b) {
@@ -149,6 +169,15 @@ Layer layer_alloc(size_t a, size_t b) {
 	l.output = mat_alloc(1, b);
 	l.input = mat_alloc(1, a);
 	l.bias = mat_alloc(1, b);
+	
+	l.delta_weight = mat_alloc(a, b);
+	l.Particular_delta_weight = mat_alloc(a, b);
+	
+	l.delta_bias = mat_alloc(1, b);
+	l.Particular_delta_bias = mat_alloc(1, b);
+	
+	l.error = mat_alloc(1, b);
+
 
 
 	return l;
@@ -167,7 +196,7 @@ NN nn_alloc(size_t input_count, size_t *arch, size_t len) {
 	nn.layer[0] = layer_alloc(input_count, arch[0]);
 
 
-	For(i, len - 1) {
+	FOR(i, len - 1) {
 		nn.layer[i + 1] = layer_alloc(arch[i], arch[i + 1]);
 	}
 	nn.layer_count = len - 1;
@@ -189,7 +218,7 @@ void nn_forward(NN nn) {
 	
 	layer_forward(nn.layer[0], nn.input);
 
-	For(i, nn.layer_count ) {
+	FOR(i, nn.layer_count ) {
 	
 		layer_forward(nn.layer[i + 1], nn.layer[i].output);
 	
@@ -200,22 +229,162 @@ void nn_forward(NN nn) {
 double nn_cost(NN nn, Mat in, Mat out) {
 
 	assert(out.cols == nn_out(nn).cols);
-
-	mat_copy(nn.input, in);
-
-	nn_forward(nn);
+	assert(in.rows == out.rows);
 
 	double cost = 0.0f;
-	FOR(i, out.cols)
-		double distance = MAT_AT(nn_out(nn), 0, i) - MAT_AT(out, 0, i);
-		cost += distance * distance;
+	
+	FOR(count, in.rows) {
+	
+		mat_copy(nn.input, mat_row(in, count));
+	
+		nn_forward(nn);
+	
+		FOR(i, out.cols) {
+			double distance = MAT_AT(nn_out(nn), 0, i) - MAT_AT(out, count, i);
+			cost += distance * distance;
+		}
+
 	}
 
-	plf(cost);
 
-
-
-	return cost;
+	return cost / in.rows;
 }
 
+void nn_delta(NN nn, Mat in, Mat out) {
+	
+
+	assert(in.rows == out.rows);
+
+	FOR(lc, nn.layer_count) {
+		mat_fill(nn.layer[lc].delta_weight, 0);
+		mat_fill(nn.layer[lc].delta_bias, 0);
+	}
+
+	// FOR(input_count, in.rows) {
+
+		mat_copy(nn.input, in); // mat_row(in, input_count));
+	
+		nn_forward(nn);
+		
+		for(size_t lc = nn.layer_count; lc + 1 > 0; lc--) {
+			
+			mat_fill(nn.layer[lc].error, 0);
+
+			if ( lc == nn.layer_count) {
+			FOR(i, nn.layer[lc].output.cols) {
+			
+				
+				MAT_AT(nn.layer[lc].error, 0, i) = 2 * (MAT_AT(nn.layer[lc].output, 0, i) - MAT_AT(out, 0, i)) * MAT_AT(nn.layer[lc].output, 0, i) * ( 1 - MAT_AT(nn.layer[lc].output, 0, i)); // sigma_o
+			}
+			} else {
+				mat_T(&nn.layer[lc + 1].weight);
+				mat_dot(nn.layer[lc].error, nn.layer[lc + 1].error, nn.layer[lc + 1].weight);
+				mat_T(&nn.layer[lc + 1].weight);
+				
+
+				mat_derivative_sig(nn.layer[lc + 1].input);
+				assert(nn.layer[lc].error.cols == nn.layer[lc + 1].input.cols);
+				FOR(j, nn.layer[lc].error.cols)
+					MAT_AT(nn.layer[lc].error, 0, j) *= MAT_AT(nn.layer[lc + 1].input, 0, j);
+			}
+		
+
+		 	mat_T(&nn.layer[lc].input);
+			mat_dot(nn.layer[lc].delta_weight, nn.layer[lc].input, nn.layer[lc].error);
+			mat_T(&nn.layer[lc].input);
+		
+			
+
+			mat_fill(nn.layer[lc].Particular_delta_bias, 0);
+			FOR(i, nn.layer[lc].delta_bias.cols) {
+				FOR(j, nn.layer[lc].delta_weight.rows)
+					MAT_AT(nn.layer[lc].delta_bias, 0, i) += MAT_AT(nn.layer[lc].Particular_delta_weight, j, i);
+			}
+
+			// mat_sum(nn.layer[lc].delta_weight, nn.layer[lc].Particular_delta_weight);
+			// mat_sum(nn.layer[lc].delta_bias, nn.layer[lc].Particular_delta_bias);
+
+		}
+
+	return;
+
+	// }
+
+	FOR(lc, nn.layer_count) {
+		FOR(r, nn.layer[lc].weight.rows) {
+			FOR(c, nn.layer[lc].weight.cols) {
+				MAT_AT(nn.layer[lc].delta_weight, r, c) /= in.rows;
+			}
+		}
+		FOR(r, nn.layer[lc].bias.rows) {
+			FOR(c, nn.layer[lc].bias.cols) {
+				MAT_AT(nn.layer[lc].delta_bias, r, c) /= in.rows;
+			}
+		}
+	}
+
+
+
+}
+
+void nn_learn(NN nn, double rate) {
+	FOR(lc, nn.layer_count) {
+		FOR(r, nn.layer[lc].weight.rows) {
+			FOR(c, nn.layer[lc].weight.cols) {
+				MAT_AT(nn.layer[lc].weight, r, c) -= rate * MAT_AT(nn.layer[lc].delta_weight, r, c);
+			}
+		}
+	FOR(r, nn.layer[lc].bias.rows) {
+			FOR(c, nn.layer[lc].bias.cols) {
+				MAT_AT(nn.layer[lc].bias, r, c) -= rate * MAT_AT(nn.layer[lc].delta_bias, r, c);
+			}
+		}
+	}
+}
+
+void Fnn_delta(NN nn, Mat inp, Mat out) {
+
+	double eps = 1e-3;
+	double rate = 1;
+	
+
+
+
+	double current_cost = nn_cost(nn, inp, out);
+
+
+	FOR(i, nn.layer_count) {
+		Layer l = nn.layer[i];
+		mat_fill(l.delta_weight, 0);
+		mat_fill(l.delta_bias, 0);
+		FOR(r, l.weight.rows) {
+			FOR(c, l.weight.cols) {
+				double saved = MAT_AT(l.weight, r, c);
+				MAT_AT(l.weight, r, c) += eps;
+				MAT_AT(l.delta_weight, r, c) = (nn_cost(nn, inp, out) - c)/eps;
+				MAT_AT(l.weight, r, c) = saved;
+				
+				saved = MAT_AT(l.bias, r, c);
+				MAT_AT(l.bias, r, c) += eps;
+				MAT_AT(l.delta_bias, r, c) = (nn_cost(nn, inp, out) - c)/eps;
+				MAT_AT(l.bias, r, c) = saved;
+
+
+
+			}
+		}
+	}
+
+	FOR(i, nn.layer_count) {
+		Layer l = nn.layer[i];
+		FOR(r, l.weight.rows) {
+			FOR(c, l.weight.cols) {
+				MAT_AT(l.weight, r, c) -= rate * MAT_AT(l.delta_weight, r, c);
+			}
+		}
+	}
+
+
+
+}
 

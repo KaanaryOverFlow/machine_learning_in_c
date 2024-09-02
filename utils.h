@@ -22,5 +22,5 @@ void print_progress_bar(size_t progress, size_t total);
 
 #define in() {note("Calling => %s",__func__);}
 #define out() {note("Returing <= %s",__func__);}
-#define FOR(iterator, number) for (size_t iterator = 0; iterator < number; iterator++) { print_progress_bar(iterator, number); 
-#define For(iterator, number) for (size_t iterator = 0; iterator < number; iterator++)
+#define FOR(iterator, number) for (size_t iterator = 0; iterator < number; iterator++)
+#define for_print_percent(iterator, number) for (size_t iterator = 0; iterator < number; iterator++) { print_progress_bar(iterator, number); 
