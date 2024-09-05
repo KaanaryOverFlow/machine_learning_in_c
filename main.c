@@ -26,6 +26,9 @@ void setup() {
 
 void default_app() {
 	in();
+
+	// TODO: implement image upsacle in this base.
+
 	double in[] = {0,1,2,3,4};
 	double out[] = {4, 8};
 	Mat input = {.rows = 1, .cols = 5, .data = in};
@@ -36,10 +39,12 @@ void default_app() {
 		dense_init(13, 2),
 	};
 	
+	plf(network_cost(network, ARRAY_LEN(network), input, output));
 	mat_p(network_forward(network, ARRAY_LEN(network), input));
 	FOR(i, 5100)
-		network_backward(network, ARRAY_LEN(network), input, output);
+		network_backward(network, ARRAY_LEN(network), 0.0000001f, input, output);
 
+	plf(network_cost(network, ARRAY_LEN(network), input, output));
 	mat_p(network_forward(network, ARRAY_LEN(network), input));
 
 	out();

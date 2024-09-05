@@ -171,9 +171,6 @@ Mat mat_T(Mat m) {
 		.cols = m.rows,
 		.data = m.data
 	};
-	// size_t rows_backup = m->rows;
-	// m->rows = m->cols;
-	// m->cols = rows_backup;
 }
 
 // class Dense(Layer):
@@ -258,23 +255,24 @@ Mat network_forward(Dense *dense, size_t dense_count, Mat in) {
 	return dense[dense_count - 1].output;
 }
 
-void network_backward(Dense *dense, size_t dense_count, Mat in, Mat out) {
+double network_cost(Dense *dense, size_t dense_count, Mat in, Mat out) {
 	double error = 0.0f;
-	double rate = 0.0000001f;
-
- 	dense_forward(dense[0], in);
- 	FOR(dc, dense_count - 1) {
- 		dense_forward(dense[dc + 1], dense[dc].output);
- 	}
- 	// mat_p(dense[dense_count - 1].output);
-	FOR(i, dense[dense_count - 1].output.cols) {
-		double d = MAT_AT(dense[dense_count - 1].output, 0, i) - MAT_AT(out, 0, i);
-		error += d*d;
-		MAT_AT(dense[dense_count - 1].output, 0, i) = 2 * (MAT_AT(dense[dense_count - 1].output, 0, i) - MAT_AT(out, 0, i)); // calculate gradient of output layer
+	FOR(c, in.rows) {
+		network_forward(dense, dense_count, mat_row(in, c));
+		FOR(i, dense[dense_count - 1].output.cols) {
+			double d = MAT_AT(dense[dense_count - 1].output, 0, i) - MAT_AT(out, c, i);
+			error += d*d;
+		}
 	}
-	// plf(error);
-	error = 0.0f;
+	return error / in.rows;
+}
 
+void network_backward(Dense *dense, size_t dense_count, double rate, Mat in, Mat out) {
+
+	Mat predict = network_forward(dense, dense_count, in);
+	FOR(i, predict.cols) {
+		MAT_AT(predict, 0, i) = 2 * (MAT_AT(predict, 0, i) - MAT_AT(out, 0, i));
+	}
 	dense_backward(dense[dense_count - 1], dense[dense_count - 1].output, rate); // this will set dense[dense_count - 1].input_gradient
 	for (size_t dc = dense_count - 1; dc > 0; dc--) {
 		dense_backward(dense[dc - 1], dense[dc].input_gradient, rate);
