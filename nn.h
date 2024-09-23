@@ -14,38 +14,18 @@ typedef struct {
 
 } Mat;
 
-typedef struct {
-	Mat weight;
-	Mat bias;
-	Mat input;
-	Mat output;
-
-	Mat delta_weight;
-	Mat Particular_delta_weight;
-	Mat delta_bias;
-	Mat Particular_delta_bias;
-	Mat error;
-} Layer;
-
-typedef struct {
-	size_t layer_count;
-	Mat input;
-	Layer *layer;
-} NN;
-
 #define MAT_AT(m, r, c) (m).data[(r)*(m).cols + (c)]
 #define ARRAY_LEN(x) sizeof(x)/sizeof(x[0])
-#define nn_p(a) nn_print(a, #a);
 
-#define nn_out(nn) (nn).layer[(nn).layer_count].output
+
 
 double rand_double(void) {
 	return (double) rand() / (double) RAND_MAX;
 }
 
 Mat mat_alloc(size_t rows, size_t cols) {
-	double h = 1;
-	double l = 0;
+	double h = 1.0f;
+	double l = -1.0f;
 	Mat m;
 	m.rows = rows;
 	m.cols = cols;
@@ -54,7 +34,7 @@ Mat mat_alloc(size_t rows, size_t cols) {
 	srand(time(NULL));
 	FOR(i, m.rows) {
 		FOR(ii, m.cols) {
-			MAT_AT(m, i, ii) = rand_double() * (h - l) + l + 1e-1;
+			MAT_AT(m, i, ii) = rand_double() * (h - l) + l;
 		}
 	}
 
@@ -106,7 +86,6 @@ void mat_dot(Mat dest, Mat a, Mat b) {
 
 	FOR(i, dest.rows) {
 		FOR(ii, dest.cols) {
-			MAT_AT(dest, i, ii) = 0;
 			for (unsigned int iii = 0; iii < inner; iii++) {
 				
 				MAT_AT(dest, i, ii) += MAT_AT(a, i, iii) * MAT_AT(b, iii, ii);
@@ -128,6 +107,7 @@ void mat_sig(Mat m) {
 	}
 }
 
+
 void mat_derivative_sig(Mat m) {
 	FOR(i, m.rows) {
 		FOR(ii, m.cols) {
@@ -136,6 +116,53 @@ void mat_derivative_sig(Mat m) {
 	}
 }
 
+#define RELU_VALUE 0.0000000000001f
+
+void mat_relu(Mat m) {
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
+			double x = MAT_AT(m, i, ii);
+			if (x <= 0.0f)
+				MAT_AT(m, i, ii) = x * RELU_VALUE; 
+		}
+	}
+}
+
+void mat_derivative_relu(Mat m) {
+	FOR(i, m.rows) {
+		FOR(ii, m.cols) {
+			double x = MAT_AT(m, i, ii);
+			if (x > 0) {
+				MAT_AT(m, i, ii) = 1; 
+			} else {
+				MAT_AT(m, i, ii) = RELU_VALUE; 
+			}
+		}
+	}
+}
+
+// void mat_relu(Mat m) {
+// 	FOR(i, m.rows) {
+// 		FOR(ii, m.cols) {
+// 			double x = MAT_AT(m, i, ii);
+// 			if (x <= 0.0f)
+// 				MAT_AT(m, i, ii) = 0; 
+// 		}
+// 	}
+// }
+// 
+// void mat_derivative_relu(Mat m) {
+// 	FOR(i, m.rows) {
+// 		FOR(ii, m.cols) {
+// 			double x = MAT_AT(m, i, ii);
+// 			if (x > 0) {
+// 				MAT_AT(m, i, ii) = 1; 
+// 			} else {
+// 				MAT_AT(m, i, ii) = 0; 
+// 			}
+// 		}
+// 	}
+// }
 
 void mat_fill(Mat m, double x) {
 	FOR(i, m.rows) {
@@ -173,109 +200,403 @@ Mat mat_T(Mat m) {
 	};
 }
 
-// class Dense(Layer):
-//     def __init__(self, input_size, output_size):
-//         self.weights = np.random.randn(output_size, input_size)
-//         self.bias = np.random.randn(output_size, 1)
-// 
-//     def forward(self, input):
-//         self.input = input
-//         return np.dot(self.weights, self.input) + self.bias
-// 
-//     def backward(self, output_gradient, learning_rate):
-//         weights_gradient = np.dot(output_gradient, self.input.T)
-//         input_gradient = np.dot(self.weights.T, output_gradient)
-//         self.weights -= learning_rate * weights_gradient
-//         self.bias -= learning_rate * output_gradient
-//         return input_gradient
-// 
 
+void mat_shuffle(Mat m, Mat n) {
+        FOR(i, m.rows) {
+                size_t r = i + rand()%(m.rows - i);
+                if (i != r) {
+                        FOR(ii, m.cols) {
+                                double temp = MAT_AT(m, i, ii);
+                                MAT_AT(m, i, ii) = MAT_AT(m, r, ii);
+                                MAT_AT(m, r, ii) = temp;
+                 	}               
+                        FOR(ii, n.cols) {
+                                double temp = MAT_AT(n, i, ii);
+                                MAT_AT(n, i, ii) = MAT_AT(n, r, ii);
+                                MAT_AT(n, r, ii) = temp;
+                        }
+                }
+        }
+}
+
+typedef enum {
+	SIGMOID,
+	RELU,
+} ACTS;
 
 typedef struct {
+	
+	
+	// dense part
 	Mat weight;
 	Mat bias;
 	
 	Mat input;
 	Mat output;
 
-	Mat weight_gradient;
-	Mat bias_gradient;
+
+	Mat dw;
+	Mat db;
+	
 	Mat input_gradient;
+	Mat temp_dw;
+	Mat temp_db;
+
+	// act part
+	ACTS act;
+	void (*activate)(Mat m);
+	void (*derivative_activate)(Mat m);
+
+
 } Dense;
 
-Dense dense_init(size_t input_size, size_t output_size) {
+Dense create_dense(size_t input_size, size_t output_size, ACTS act) {
 	Dense dense;
-	dense.weight = mat_alloc(output_size, input_size);
+
+	dense.weight = mat_alloc(input_size, output_size);
 	dense.bias = mat_alloc(1, output_size);
+	
 	dense.input = mat_alloc(1, input_size);
 	dense.output = mat_alloc(1, output_size);
 	
-	dense.weight_gradient = mat_alloc(output_size, input_size);
-	dense.bias_gradient = mat_alloc(1, output_size);
+	dense.dw = mat_alloc(input_size, output_size);
+	dense.db = mat_alloc(1, output_size);
+	
 	dense.input_gradient = mat_alloc(1, input_size);
-#if 0
-	mat_p(dense.weight);
-	mat_p(dense.bias);
-	mat_p(dense.input);
-	mat_p(dense.output);
-	mat_p(dense.weight_gradient);
-	mat_p(dense.bias_gradient);
-	mat_p(dense.input_gradient);
-#endif
+	dense.temp_dw = mat_alloc(input_size, output_size);
+	dense.temp_db = mat_alloc(1, output_size);
+	
+	
+	switch (act) {
+		case SIGMOID:
+			dense.activate = &mat_sig;
+			dense.derivative_activate = &mat_derivative_sig;
+			break;
+		case RELU:
+			dense.activate = &mat_relu;
+			dense.derivative_activate = &mat_derivative_relu;
+			break;
+		default:
+			die("wrong action");
+			break;
+
+	}
+	dense.act = act;
+	
 	return dense;
 }
 
-
 void dense_forward(Dense dense, Mat input) {
 	mat_copy(dense.input, input);
-	mat_dot(dense.output, dense.input, mat_T(dense.weight));
+	mat_dot(dense.output, dense.input, dense.weight);
 	mat_sum(dense.output, dense.bias);
+
+	dense.activate(dense.output);
+
 }
 
-void dense_backward(Dense dense, Mat gradient, double rate) {
-	mat_dot(dense.weight_gradient, mat_T(gradient), dense.input);
-	mat_dot(dense.input_gradient, gradient, dense.weight);
-	FOR(i, dense.weight.rows) {
-		FOR(j, dense.weight.cols) {
-			MAT_AT(dense.weight, i, j) -= MAT_AT(dense.weight_gradient, i, j) * rate;
+void dense_backward(Dense dense, Mat grad) {
+	dense.derivative_activate(dense.output);
+
+	FOR(i, grad.cols)
+		MAT_AT(grad, 0, i) *= MAT_AT(dense.output, 0, i);
+	
+	mat_dot(dense.temp_dw, mat_T(dense.input), grad);
+	mat_copy(dense.temp_db, grad);
+	mat_dot(dense.input_gradient, grad, mat_T(dense.weight));
+	
+
+	mat_sum(dense.dw, dense.temp_dw);
+	mat_sum(dense.db, dense.temp_db);
+}
+
+void dense_apply(Dense dense, double lr) {
+
+	FOR(r, dense.weight.rows) {
+		FOR(c, dense.weight.rows) {
+			MAT_AT(dense.weight, r, c) -= MAT_AT(dense.dw, r, c) * lr;
 		}
 	}
-	FOR(i, dense.bias.rows) {
-		FOR(j, dense.bias.cols) {
-			MAT_AT(dense.bias, i, j) -= MAT_AT(dense.bias_gradient, i, j) * rate;
+
+
+	FOR(r, dense.bias.rows) {
+		FOR(c, dense.bias.rows) {
+			MAT_AT(dense.bias, r, c) -= MAT_AT(dense.db, r, c) * lr;
+		}
+	}
+	
+
+}
+
+typedef struct {
+	size_t count;
+	Dense *dense;
+	Mat grad;
+} NN;
+
+void nn_rand(NN nn) {
+	double h = 1.0f;
+	double l = -1.0f;
+	
+	FOR(i, nn.count) {
+
+		FOR(r, nn.dense[i].weight.rows) {
+			FOR(c, nn.dense[i].weight.cols) {
+				MAT_AT(nn.dense[i].weight, r, c) =rand_double() * (h - l) + l; 
+			}
+		}
+	
+		FOR(r, nn.dense[i].bias.rows) {
+			FOR(c, nn.dense[i].bias.cols) {
+				MAT_AT(nn.dense[i].bias, r, c) =rand_double() * (h - l) + l; 
+			}
+		}
+
+	}
+}
+
+void nn_load(NN nn, char *name) {
+	int fd = open(name, O_CREAT | O_RDWR);
+	if (fd < 0) die("no saved network to load");
+	FOR(i, nn.count) {
+		FOR(r, nn.dense[i].weight.rows) {
+			FOR(c, nn.dense[i].weight.cols) {
+				read(fd,
+						&MAT_AT(nn.dense[i].weight, r, c)
+					,8);
+			}
+		}
+		FOR(r, nn.dense[i].bias.rows) {
+			FOR(c, nn.dense[i].bias.cols) {
+				read(fd,
+						&MAT_AT(nn.dense[i].bias, r, c)
+					,8);
+			}
+		}
+
+	}
+	close(fd);
+}
+
+
+void nn_save(NN nn, char *name) {
+	int fd = open(name, O_CREAT | O_RDWR, 0666);
+	FOR(i, nn.count) {
+		FOR(r, nn.dense[i].weight.rows) {
+			FOR(c, nn.dense[i].weight.cols) {
+				write(fd,
+						&MAT_AT(nn.dense[i].weight, r, c)
+					,8);
+			}
+		}
+		FOR(r, nn.dense[i].bias.rows) {
+			FOR(c, nn.dense[i].bias.cols) {
+				write(fd,
+						&MAT_AT(nn.dense[i].bias, r, c)
+					,8);
+			}
+		}
+
+	}
+	close(fd);
+}
+
+#define nn_out(nn) (nn).dense[(nn).count - 1].output
+
+void nn_forward(NN nn, Mat input) {
+
+	FOR(dense_index, nn.count) {
+		if(dense_index == 0) {
+			dense_forward(nn.dense[dense_index], input);
+		} else {
+			dense_forward(nn.dense[dense_index], nn.dense[dense_index - 1].output);
 		}
 	}
 }
 
-Mat network_forward(Dense *dense, size_t dense_count, Mat in) {
-	dense_forward(dense[0], in);
- 	FOR(dc, dense_count - 1) {
- 		dense_forward(dense[dc + 1], dense[dc].output);
- 	}
-	return dense[dense_count - 1].output;
+void nn_backward(NN nn, Mat grad) {
+	for (size_t index = nn.count; index > 0; index--) {
+		if (index == nn.count) {
+			dense_backward(nn.dense[index - 1], nn.grad);
+		} else {
+			dense_backward(nn.dense[index - 1], nn.dense[index].input_gradient);
+		}
+		
+	}
 }
 
-double network_cost(Dense *dense, size_t dense_count, Mat in, Mat out) {
-	double error = 0.0f;
-	FOR(c, in.rows) {
-		network_forward(dense, dense_count, mat_row(in, c));
-		FOR(i, dense[dense_count - 1].output.cols) {
-			double d = MAT_AT(dense[dense_count - 1].output, 0, i) - MAT_AT(out, c, i);
-			error += d*d;
+double nn_cost(NN network, Mat input, Mat output) {
+		double err = 0;
+		FOR(ic, input.rows) {
+			nn_forward(network, mat_row(input, ic));
+			FOR(i, nn_out(network).cols) {
+				double t = MAT_AT(nn_out(network), 0, i) - MAT_AT(output, ic, i);
+				err += t * t;
+			}
+		}
+		
+		err /= input.rows;
+		return err;
+	
+}
+
+void nn_update(NN network, double lr, Mat input, Mat output) {
+	
+	FOR(index, network.count) {
+		mat_fill(network.dense[index].dw, 0);
+		mat_fill(network.dense[index].db, 0);
+	}
+	
+	double err = 0;
+	FOR(ic, input.rows) {
+		nn_forward(network, mat_row(input, ic));
+
+	
+		FOR(i, nn_out(network).cols) {
+			double t = MAT_AT(nn_out(network), 0, i) - MAT_AT(output, ic, i);
+			err += t * t;
+			if (network.dense[network.count - 1].act == RELU)
+				MAT_AT(network.grad, 0, i) = t;
+			else if (network.dense[network.count -1].act == SIGMOID)
+				MAT_AT(network.grad, 0, i) = 2 * t;
+			else
+				die("invalid activation function");
+		}
+		
+		nn_backward(network, network.grad);
+	}
+	
+	err /= input.rows;
+	// plf(err);
+	
+
+	FOR(index, network.count) {
+		FOR(r, network.dense[index].weight.rows) {
+			FOR(c, network.dense[index].weight.cols) {
+				MAT_AT(network.dense[index].dw, r, c) /= input.rows;
+			}
+			
+		}
+		
+		FOR(r, network.dense[index].bias.rows) {
+			FOR(c, network.dense[index].bias.cols) {
+				MAT_AT(network.dense[index].db, r, c) /= input.rows;
+			}
+			
 		}
 	}
-	return error / in.rows;
+
+
+	FOR(index, network.count) {
+		dense_apply(network.dense[index], lr);
+	}
+
 }
 
-void network_backward(Dense *dense, size_t dense_count, double rate, Mat in, Mat out) {
+void nn_fit(NN network, size_t epoch, double lr, size_t batch_size, Mat inputs, Mat outputs) {
+	
+	size_t n = inputs.rows;
+	
+	assert(batch_size <= n);
+	
+	size_t last = n % batch_size;
 
-	Mat predict = network_forward(dense, dense_count, in);
-	FOR(i, predict.cols) {
-		MAT_AT(predict, 0, i) = 2 * (MAT_AT(predict, 0, i) - MAT_AT(out, 0, i));
+	size_t batch_count = n / batch_size;
+
+	if (last)
+		batch_count++;
+
+		
+	
+
+	FOR(epoch_, epoch) {
+		
+		mat_shuffle(inputs, outputs);
+
+
+		FOR(k, batch_count) {
+			size_t size = batch_size;
+			if (last && (k * batch_size + batch_size) > n ){
+				size = last;
+			}
+
+			Mat mini_batch_in = {
+				.rows = size, 
+				.cols = inputs.cols,
+				.data = &MAT_AT(inputs, k * batch_size, 0)
+			};
+	
+			Mat mini_batch_out = {
+				.rows = size, 
+				.cols = outputs.cols,
+				.data = &MAT_AT(outputs, k * batch_size, 0)
+			};
+			
+		// 	plu(size);
+		// 	mat_p(mini_batch_in);
+		// 	mat_p(mini_batch_out);
+		// 	getchar();
+
+			
+			nn_update(network, lr, mini_batch_in, mini_batch_out);
+		}
+
+
 	}
-	dense_backward(dense[dense_count - 1], dense[dense_count - 1].output, rate); // this will set dense[dense_count - 1].input_gradient
-	for (size_t dc = dense_count - 1; dc > 0; dc--) {
-		dense_backward(dense[dc - 1], dense[dc].input_gradient, rate);
+
+}
+
+void nn_train(NN network, size_t epoch, double lr, Mat input, Mat output) {
+
+	FOR(epoch_, epoch) {
+
+		nn_update(network, lr, input, output);
+		continue;
+	
+		FOR(index, network.count) {
+			mat_fill(network.dense[index].dw, 0);
+			mat_fill(network.dense[index].db, 0);
+		}
+		
+		double err = 0;
+		FOR(ic, input.rows) {
+			nn_forward(network, mat_row(input, ic));
+	
+		
+			FOR(i, nn_out(network).cols) {
+				double t = MAT_AT(nn_out(network), 0, i) - MAT_AT(output, ic, i);
+				err += t * t;
+				MAT_AT(network.grad, 0, i) = 2 * t;
+			}
+			
+			nn_backward(network, network.grad);
+		}
+		
+		err /= input.rows;
+		plf(err);
+		
+	
+		FOR(index, network.count) {
+			FOR(r, network.dense[index].weight.rows) {
+				FOR(c, network.dense[index].weight.cols) {
+					MAT_AT(network.dense[index].dw, r, c) /= input.rows;
+				}
+				
+			}
+			
+			FOR(r, network.dense[index].bias.rows) {
+				FOR(c, network.dense[index].bias.cols) {
+					MAT_AT(network.dense[index].db, r, c) /= input.rows;
+				}
+				
+			}
+		}
+	
+	
+		FOR(index, network.count) {
+			dense_apply(network.dense[index], lr);
+		}
 	}
+
 }
 
