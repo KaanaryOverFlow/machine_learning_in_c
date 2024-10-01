@@ -99,6 +99,8 @@ double sigmoidf(double x) {
 	return 1 / (1 + exp(-x));
 }
 
+#define LowerValue 0.001f
+
 void mat_sig(Mat m) {
 	FOR(i, m.rows) {
 		FOR(ii, m.cols) {
@@ -116,7 +118,7 @@ void mat_derivative_sig(Mat m) {
 	}
 }
 
-#define RELU_VALUE 0.0000000000001f
+#define RELU_VALUE 0.2f
 
 void mat_relu(Mat m) {
 	FOR(i, m.rows) {
@@ -124,6 +126,8 @@ void mat_relu(Mat m) {
 			double x = MAT_AT(m, i, ii);
 			if (x <= 0.0f)
 				MAT_AT(m, i, ii) = x * RELU_VALUE; 
+			else
+				MAT_AT(m, i, ii) = x; 
 		}
 	}
 }
@@ -140,29 +144,6 @@ void mat_derivative_relu(Mat m) {
 		}
 	}
 }
-
-// void mat_relu(Mat m) {
-// 	FOR(i, m.rows) {
-// 		FOR(ii, m.cols) {
-// 			double x = MAT_AT(m, i, ii);
-// 			if (x <= 0.0f)
-// 				MAT_AT(m, i, ii) = 0; 
-// 		}
-// 	}
-// }
-// 
-// void mat_derivative_relu(Mat m) {
-// 	FOR(i, m.rows) {
-// 		FOR(ii, m.cols) {
-// 			double x = MAT_AT(m, i, ii);
-// 			if (x > 0) {
-// 				MAT_AT(m, i, ii) = 1; 
-// 			} else {
-// 				MAT_AT(m, i, ii) = 0; 
-// 			}
-// 		}
-// 	}
-// }
 
 void mat_fill(Mat m, double x) {
 	FOR(i, m.rows) {
@@ -200,6 +181,19 @@ Mat mat_T(Mat m) {
 	};
 }
 
+void mat_shuffle_one(Mat m) {
+        FOR(i, m.rows) {
+                size_t r = i + rand()%(m.rows - i);
+                if (i != r) {
+                        FOR(ii, m.cols) {
+                                double temp = MAT_AT(m, i, ii);
+                                MAT_AT(m, i, ii) = MAT_AT(m, r, ii);
+                                MAT_AT(m, r, ii) = temp;
+                 	}               
+                }
+        }
+}
+
 
 void mat_shuffle(Mat m, Mat n) {
         FOR(i, m.rows) {
@@ -217,6 +211,18 @@ void mat_shuffle(Mat m, Mat n) {
                         }
                 }
         }
+}
+
+int is_mat_nan(Mat m) {
+
+        FOR(i, m.rows) {
+
+        	FOR(ii, m.cols) {
+                                if (MAT_AT(m, i, ii) != MAT_AT(m, i, ii)) return 1;
+
+		}
+	}
+	return 0;
 }
 
 typedef enum {
@@ -311,16 +317,15 @@ void dense_backward(Dense dense, Mat grad) {
 }
 
 void dense_apply(Dense dense, double lr) {
-
 	FOR(r, dense.weight.rows) {
-		FOR(c, dense.weight.rows) {
+		FOR(c, dense.weight.cols) {
 			MAT_AT(dense.weight, r, c) -= MAT_AT(dense.dw, r, c) * lr;
 		}
 	}
 
 
 	FOR(r, dense.bias.rows) {
-		FOR(c, dense.bias.rows) {
+		FOR(c, dense.bias.cols) {
 			MAT_AT(dense.bias, r, c) -= MAT_AT(dense.db, r, c) * lr;
 		}
 	}
@@ -447,14 +452,14 @@ void nn_update(NN network, double lr, Mat input, Mat output) {
 		mat_fill(network.dense[index].db, 0);
 	}
 	
-	double err = 0;
+	// double err = 0;
 	FOR(ic, input.rows) {
 		nn_forward(network, mat_row(input, ic));
 
 	
 		FOR(i, nn_out(network).cols) {
 			double t = MAT_AT(nn_out(network), 0, i) - MAT_AT(output, ic, i);
-			err += t * t;
+			// err += t * t;
 			if (network.dense[network.count - 1].act == RELU)
 				MAT_AT(network.grad, 0, i) = t;
 			else if (network.dense[network.count -1].act == SIGMOID)
@@ -466,7 +471,7 @@ void nn_update(NN network, double lr, Mat input, Mat output) {
 		nn_backward(network, network.grad);
 	}
 	
-	err /= input.rows;
+	// err /= input.rows;
 	// plf(err);
 	
 
@@ -493,6 +498,59 @@ void nn_update(NN network, double lr, Mat input, Mat output) {
 
 }
 
+
+void nn_fit_callback(NN network, size_t epoch, double lr, size_t batch_size, void (*callback)(NN net, size_t x, size_t y, size_t u, size_t bc, Mat in, Mat out), Mat inputs, Mat outputs) {
+	size_t n = inputs.rows;
+	
+	assert(batch_size <= n);
+	
+	size_t last = n % batch_size;
+
+	size_t batch_count = n / batch_size;
+
+	if (last)
+		batch_count++;
+
+		
+	
+
+	FOR(epoch_, epoch) {
+
+		mat_shuffle_one(inputs);
+
+		FOR(k, batch_count) {
+				size_t size = batch_size;
+				if (last && (k * batch_size + batch_size) > n ){
+					size = last;
+				}
+	
+				Mat mini_batch_in = {
+					.rows = size, 
+					.cols = inputs.cols,
+					.data = &MAT_AT(inputs, k * batch_size, 0)
+				};
+		
+				Mat mini_batch_out = {
+					.rows = size, 
+					.cols = outputs.cols,
+					.data = &MAT_AT(outputs, k * batch_size, 0)
+				};
+	
+			nn_update(network, lr, mini_batch_in, mini_batch_out);
+			callback(
+					network,
+					epoch_,
+					epoch,
+					k,
+					batch_count,
+					mini_batch_in, 
+					mini_batch_out
+				);
+		}
+	}
+
+}
+
 void nn_fit(NN network, size_t epoch, double lr, size_t batch_size, Mat inputs, Mat outputs) {
 	
 	size_t n = inputs.rows;
@@ -511,7 +569,10 @@ void nn_fit(NN network, size_t epoch, double lr, size_t batch_size, Mat inputs, 
 
 	FOR(epoch_, epoch) {
 		
-		mat_shuffle(inputs, outputs);
+		// mat_shuffle(inputs, outputs);
+
+			
+		/* For autoencoder */ mat_shuffle_one(inputs);
 
 
 		FOR(k, batch_count) {
