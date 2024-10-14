@@ -118,7 +118,7 @@ void mat_derivative_sig(Mat m) {
 	}
 }
 
-#define RELU_VALUE 0.2f
+#define RELU_VALUE 0.01f
 
 void mat_relu(Mat m) {
 	FOR(i, m.rows) {
@@ -601,7 +601,9 @@ void nn_fit(NN network, size_t epoch, double lr, size_t batch_size, Mat inputs, 
 			
 			nn_update(network, lr, mini_batch_in, mini_batch_out);
 		}
-
+#ifdef NN_DEBUG
+		note("epoch %lu / %lu\t\tloss : %lf",epoch_, epoch, nn_cost(network, inputs, outputs));
+#endif
 
 	}
 
@@ -661,3 +663,47 @@ void nn_train(NN network, size_t epoch, double lr, Mat input, Mat output) {
 
 }
 
+Mat average_pooling_1D(size_t sample_size, Mat input) {
+	
+	size_t new_cols = input.cols / sample_size;
+	
+	// assert(input.rows == 1);
+	assert(input.cols % sample_size == 0);
+	
+	
+	Mat output = mat_alloc(input.rows, new_cols);
+
+	FOR(row, input.rows) {
+
+		FOR(i, new_cols) {
+			double temp = 0;
+			FOR(j, sample_size) {
+				temp += MAT_AT(input, row, i * sample_size + j);
+			}
+			MAT_AT(output, row, i) = temp / sample_size;
+		}
+
+	}
+
+
+
+	return output;
+
+}
+
+Mat upsample(Mat input, size_t sample_size) {
+	
+	size_t new_cols = input.cols * sample_size;
+	
+	Mat output = mat_alloc(input.rows, new_cols);
+
+	FOR(row, input.rows) {
+	
+		FOR(i, output.cols) {
+			MAT_AT(output, row, i) = MAT_AT(input, row, i / sample_size);
+		}
+	}
+
+	return output;
+
+}
